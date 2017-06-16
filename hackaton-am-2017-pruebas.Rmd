@@ -1,0 +1,417 @@
+---
+title: "HACKATON AM - Arbolado Publico - Pruebas"
+output: html_notebook
+---
+```{r setup}
+knitr::opts_chunk$set(include = FALSE)
+library(caret)
+```
+
+# Soporte ejecucion paralela
+```{r}
+library(parallel)
+library(doParallel)
+library(readr)
+Sys.setenv(PATH = paste0(Sys.getenv('PATH'), ':/usr/lib/rstudio-server/bin/postback'))
+primary <- '192.168.1.130'
+machineAddresses <- list(
+  list(host=primary,user='harpo',
+       ncore=6)
+ ,list(host='nodo0',user='user',ncore=6)
+ ,list(host='nodo1',user='user',ncore=6)
+ ,list(host='nodo2',user='user',ncore=6)
+ ,list(host='nodo3',user='user',ncore=6)
+)
+spec <- lapply(machineAddresses,
+               function(machine) {
+                 rep(list(list(host=machine$host,
+                               user=machine$user)),
+                     machine$ncore)
+               })
+spec <- unlist(spec,recursive=FALSE)
+parallelCluster <- parallel::makeCluster(type='PSOCK',
+                                         master=primary,
+                                         spec=spec,useXDR=T)
+registerDoParallel(parallelCluster,cores=NULL)
+getDoParWorkers()
+```
+
+```{r}
+ scoreAUC<-function(category,posterior){
+  r=rank(posterior)
+  auc = (sum(r*(category==1)) - sum(category==1) * (sum(category==1)+1)/2) / ( sum(category<1) * sum(category==1));
+}
+```
+# Archivos de datos
+
+El archivo [hackaton-am-2017.zip](https://www.dropbox.com/s/snqpzwj4111n2su/hackaton-am-2017.zip?dl=1) contiene 3 archivos
+
+* arbolado-mza-dataset.csv - el archivo de entrenamiento
+* arbolado-mza-dataset-test.csv - el archivo de test o prueba sin etiquetas
+* arbolado-mza-dataset-solutions.csv - el archivo con las etiquetas de test
+
+# Leer archivos  Entrenamiento y Testeo:
+```{r }
+data_train <- readr::read_csv("./arbolado-mza-dataset.csv",
+                              col_types = cols(
+  id = col_integer(),
+  especie = col_character(),
+  ultima_modificacion = col_character(),
+  altura = col_character(),
+  circ_tronco_cm = col_double(),
+  diametro_tronco = col_character(),
+  long = col_double(),
+  lat = col_double(),
+  seccion = col_integer(),
+  nombre_seccion = col_character(),
+  area_seccion = col_double(),
+  inclinacion_peligrosa = col_integer()
+))
+
+data_test <-  readr::read_csv("./arbolado-mza-dataset-test.csv",col_types = cols(
+  id = col_integer(),
+  especie = col_character(),
+  ultima_modificacion = col_character(),
+  altura = col_character(),
+  circ_tronco_cm = col_double(),
+  diametro_tronco = col_character(),
+  long = col_double(),
+  lat = col_double(),
+  seccion = col_integer(),
+  nombre_seccion = col_character(),
+  area_seccion = col_double()
+))
+
+#data_train<-data_train %>% filter(especie!='Morera')
+#data_test<-data_test %>% filter(especie!='Morera')
+```
+## Transformaciones:
+
+Algunos algoritmos no permiten nombres de factores como 1 y 0, se transforma la clase **inclinacion_peligrosa** a **si** y **no**
+```{r}
+data_train<-data_train %>% mutate(inclinacion_peligrosa=ifelse(inclinacion_peligrosa=='1','si','no'))
+data_train
+```
+
+
+
+# ALGORITMOS
+## Configuración de Algoritmos del paquete caret
+```{r}
+set.seed(301)
+ctrl_fast <- trainControl(method="cv", 
+                     repeats=2,
+                     number=5, 
+                     summaryFunction=twoClassSummary,
+                     verboseIter=T,
+                     classProbs=TRUE,
+                     allowParallel = TRUE,
+                     sampling='down')
+```
+
+## ARBOL DE DECISION
+
+1. Se seleccionan las variables
+2. Se hace un downsampling de la clase minoritaria
+3. Se hace un finetuning via **tuneLength**
+
+### Entrenamiento
+```{r}
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+seccion+especie)
+ctrl_fast$sampling='down'
+tree_model_3<- train(train_formula,
+               data = data_train,
+               method = "rpart",
+               #tuneLength = 15,
+               #preProcess=c("scale","center"),
+               metric="ROC",
+               trControl = ctrl_fast)
+tree_model_3
+```
+### Generacion del archivo de ENVIO
+```{r}
+preds_tree_probs=predict(tree_model_3,data_test,type='prob',se.fit=FALSE)
+preds_tree=ifelse(preds_tree_probs$si >=0.5,1,0)
+submission<-data.frame(id=data_test$id,inclinacion_peligrosa=preds_tree)
+readr::write_csv(submission,"./arbolado-mza-dataset-envio-ejemplo-rpart.csv")
+submission
+```
+### Calculo de ROC AUC
+
+```{r}
+solutions<-readr::read_csv("./arbolado-mza-dataset-solutions.csv")
+confusionMatrix(submission$inclinacion_peligrosa,solutions$inclinacion_peligrosa,mode='everything')
+auc(solutions$inclinacion_peligrosa,submission$inclinacion_peligrosa)
+```
+## ARBOL DE DECISION Agregando Features
+
+```{r}
+data_arbolado<-rbind(data_train[,-12],data_test)
+data_arbolado
+
+especies_count<-data_arbolado %>% group_by(especie) %>% summarise(especie_total=n())
+data_arbolado<-inner_join(data_arbolado,especies_count,by="especie")
+
+especies_promedio_tronco<-data_arbolado %>% group_by(especie,seccion) %>% summarise(promedio_tronco=mean(circ_tronco_cm))
+
+data_arbolado<-inner_join(data_arbolado,especies_promedio_tronco,by=c("especie","seccion"))  %>% mutate(sd_tronco=circ_tronco_cm-promedio_tronco)
+
+data_train_extended<-inner_join(data_train, data_arbolado %>% select(id,sd_tronco,promedio_tronco,especie_total),by='id')
+data_test_extended<-inner_join(data_test, data_arbolado %>% select(id,sd_tronco,promedio_tronco,especie_total),by='id')
+
+altura_map<-c("Alto (> 8 mts)"=4,"Medio (4 - 8 mts)"=3,"Bajo (2 - 4 mts)"=2,"Muy bajo (1 - 2 mts)"=1)
+data_train_extended<-data_train_extended %>% mutate(altura=altura_map[as.character(altura)]) 
+data_test_extended<-data_test_extended %>% mutate(altura=altura_map[as.character(altura)]) 
+
+diametro_tronco_map<-c("Grande"=3,"Mediano"=2,"Chico"=1)
+
+
+data_train_extended<-data_train_extended %>% mutate(diametro_tronco=diametro_tronco_map[as.character(diametro_tronco)]) 
+data_test_extended<-data_test_extended %>% mutate(diametro_tronco=diametro_tronco_map[as.character(diametro_tronco)]) 
+
+data_train_extended
+```
+### Entrenamiento
+```{r}
+
+svmGrid <-  expand.grid(C= c(0.5,0.4,0.3,0.2,0.1,0.05,0.02,0.01,1,2,4), 
+                        sigma = c(0.01,0.02,0.1,0.5,1,2,4) 
+                        )
+train_formula<-formula(inclinacion_peligrosa~altura,lat,long,circ_tronco_cm)
+#train_formula<-formula(inclinacion_peligrosa~altura+lat+long+area_seccion+especie_total+sd_tronco+promedio_tronco)
+
+ctrl_fast$sampling=NULL
+tree_model_4<- train(train_formula,
+               data = data_train,
+               method = "rpart",
+               #method="rf",
+               
+               tuneLength = 8,
+               #tuneGrid=svmGrid,
+               #preProcess=c('pca'),
+               #preProcess=c("scale","center"),
+               metric="ROC",
+               trControl = ctrl_fast)
+tree_model_4$finalModel
+```
+
+### Generacion del archivo de ENVIO
+```{r}
+preds_tree_probs=predict(tree_model_4,data_test_extended,type='prob',se.fit=FALSE)
+preds_tree_probs
+preds_tree=ifelse(preds_tree_probs$si >=0.5,1,0)
+submission<-data.frame(id=data_test$id,inclinacion_peligrosa=preds_tree)
+readr::write_csv(submission,"./arbolado-mza-dataset-envio-ejemplo-rf-promedios-tronco-extended.csv")
+```
+### Calculo de ROC AUC
+
+```{r}
+solutions<-readr::read_csv("./arbolado-mza-dataset-solutions.csv")
+confusionMatrix(submission$inclinacion_peligrosa,solutions$inclinacion_peligrosa,mode='everything')
+auc(solutions$inclinacion_peligrosa,submission$inclinacion_peligrosa)
+plot(roc(solutions$inclinacion_peligrosa,submission$inclinacion_peligrosa))
+``` 
+## SUPPORT VECTOR MACHINES
+### Preprocesamiento
+```{r}
+data_arbolado<-rbind(data_train[,-12],data_test) 
+data_arbolado$seccion<-as.factor(data_arbolado$seccion)
+
+dmy <- dummyVars(" ~ .", data = data_arbolado %>% select(altura,circ_tronco_cm,seccion,especie,lat,long))
+data_arbolado_dummy <- data.frame(predict(dmy, newdata = data_arbolado))
+```
+#### Clustering Sampling
+```{r}
+data_arbolado_dummy_kmeans<-kmeans(data_arbolado_dummy,centers=100,nstart = 40)
+data_arbolado_dummy<-cbind(data_arbolado_dummy,cluster=data_arbolado_dummy_kmeans$cluster)
+```
+
+
+#### 
+Agragamos los ID y volvemos a separar en train y test originales pero con el feature **cluster**
+```{r}
+data_arbolado_dummy<- cbind(data_arbolado_dummy,id=data_arbolado$id)
+data_train_dummy<- inner_join(data_arbolado_dummy,data_train%>%select(id),by='id')
+data_train_dummy<- cbind(data_train_dummy,inclinacion_peligrosa=data_train$inclinacion_peligrosa)
+
+data_test_dummy<- inner_join(data_arbolado_dummy,data_test%>% select(id),by='id')
+######
+
+data_train_dummy %>% filter(inclinacion_peligrosa=='no') %>% group_by(cluster,inclinacion_peligrosa) %>% summarise(n=n()) %>% arrange((n))
+data_train_cluster_sampled=c()
+for (cluster_id in seq(1:100)){
+              data_train_cluster_sampled=rbind(data_train_cluster_sampled,data_train_dummy %>% filter(inclinacion_peligrosa=='no') %>% filter(cluster==cluster_id) %>% sample_n(size=40,replace=T))
+}
+
+data_train_cluster_sampled<- rbind(data_train_cluster_sampled, data_train_dummy %>% filter(inclinacion_peligrosa=='si'))
+data_train_cluster_sampled %>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
+
+
+train_formula<-formula(inclinacion_peligrosa~. - id  )
+data_train_cluster_sampled 
+data_test_dummy
+```
+
+### Entrenamiento
+```{r}
+
+svmGrid <-  expand.grid(C= c(0.5,0.4,0.3,0.2,0.1,0.05,0.02,0.01,1,2,4), 
+                        sigma = c(0.01,0.02,0.1,0.5,1,2,4) 
+                        )
+
+ctrl_fast$sampling='up'
+svm_model<- train(train_formula,
+               data = data_train_dummy,
+               method = "rf",
+               #method="rf",
+               
+               tuneLength = 15,
+               #tuneGrid=svmGrid,
+               #preProcess=c('pca'),
+               #preProcess=c("scale","center"),
+               metric="ROC",
+               trControl = ctrl_fast)
+svm_model
+svm_model$finalModel
+```
+
+### Generacion del archivo de ENVIO
+```{r}
+preds_tree_probs=predict(svm_model,data_test_dummy,type='prob',se.fit=FALSE)
+preds_tree_probs
+preds_tree=ifelse(preds_tree_probs$si >=0.5,1,0)
+submission<-data.frame(id=data_test$id,inclinacion_peligrosa=preds_tree)
+readr::write_csv(submission,"./arbolado-mza-dataset-envio-ejemplo-rf-promedios-tronco-extended.csv")
+```
+### Calculo de ROC AUC
+
+```{r}
+solutions<-readr::read_csv("./arbolado-mza-dataset-solutions.csv")
+
+#solutions<-solutions %>% filter( id %in% submission$id)
+confusionMatrix(submission$inclinacion_peligrosa,solutions$inclinacion_peligrosa,mode='everything')
+
+#plot(roc(solutions$inclinacion_peligrosa,submission$inclinacion_peligrosa))
+auc(solutions$inclinacion_peligrosa,submission$inclinacion_peligrosa)
+```
+### Analisis de resultados
+```{r}
+load("./svm-onehot-downsamp.Rda")
+results<-cbind(data_test,prediction=preds_tree,class=solutions$inclinacion_peligrosa)
+results %>% filter(class == 1 & prediction ==0 ) %>% group_by(seccion,especie) %>% summarise(n=n())
+
+ggplot(results %>% filter(class == 1 & prediction ==0 ) %>% group_by(seccion,especie) %>% summarise(n=n() ))+
+  geom_col(aes(x=especie,y=n,fill=especie))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  facet_wrap(~seccion)
+save(results,file="./svm-onehot-downsamp.Rda")
+ggsave("./svm-onehot-downsamp.png")
+```
+
+
+
+
+
+
+
+## VARIANTE USANDO PCA y k-means
+```{r}
+
+data_train_extended$inclinacion_peligrosa<-as.factor(data_train_extended$inclinacion_peligrosa)
+data_train_sampled<- downSample(x = data_train_extended,  y = data_train_extended$inclinacion_peligrosa, yname="class")
+#data_train_sampled<-data_train_extended
+
+data_selected<-data_train_sampled %>% select(altura,lat,long,sd_tronco,promedio_tronco,especie_total)
+pca<-prcomp(data_selected, center = TRUE, scale. = TRUE) 
+pca_cluster<-kmeans(pca$x,centers = 4)
+
+pca_arbolado<-data.frame(pca$x,
+                         inclinacion_peligrosa=data_train_sampled$inclinacion_peligrosa,
+                         cluster=pca_cluster$cluster,
+                         especie=data_train_sampled$especie,
+                         seccion=data_train_sampled$seccion)
+
+# Solo un 10% del dataset para ggplotly          
+sample_pca_arbolado<-pca_arbolado[sample(nrow(data_train_sampled),(nrow(data_train_sampled)*100/100)),]   
+
+
+
+
+
+ggplot(cbind(sample_pca_arbolado,cluster=pca_arbolado_cluster$cluster)
+     ,aes(x=PC3,y=PC1))+
+  geom_point(aes(color=as.factor(cluster),shape=as.factor(inclinacion_peligrosa),alpha=0.5))+
+  #geom_point(aes(shape=asignacion),size=3)+
+  ylab("PC1")+xlab("PC2")+
+  theme_classic()+
+   #scale_shape_manual(values=c(8,6))+
+   guides(color=FALSE,alpha=FALSE)
+```
+### Entrenamiento
+```{r}
+
+svmGrid <-  expand.grid(C= c(0.5,0.4,0.3,0.2,0.1,0.05,0.02,0.01,1,2,4), 
+                        sigma = c(0.01,0.02,0.1,0.5,1,2,4) 
+                        )
+train_formula<-formula(inclinacion_peligrosa~PC1+PC2+PC3+PC4+cluster)
+ctrl_fast$sampling=NULL
+tree_model_5<- train(train_formula,
+               data =cbind(sample_pca_arbolado,cluster=pca_arbolado_cluster$cluster),
+               method = "rf",
+               tuneLength = 15,
+               #tuneGrid=svmGrid,
+               #preProcess=c("scale","center"),
+               metric="ROC",
+               trControl = ctrl_fast)
+tree_model_5
+
+cbind(sample_pca_arbolado,cluster=pca_arbolado_cluster$cluster) %>% filter(cluster==4) %>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
+
+```
+
+
+# SAMPLING Techniques
+## SAMPLING by clustering I
+```{r}
+data_arbolado<-rbind(data_train_extended[,-12],data_test_extended)
+data_selected<-data_arbolado%>% select(id,altura,lat,long,circ_tronco_cm,especie_total) 
+#data_train_extended %>% select(altura,lat,long,circ_tronco_cm,especie_total)
+data_selected_cluster<-kmeans(data_selected ,centers = 100,nstart = 40)
+
+
+data_extended_cluster<-cbind(data_arbolado,cluster=data_selected_cluster$cluster)
+
+data_train_extended_cluster<- inner_join(data_train_extended,data_extended_cluster%>%select(id,cluster),by='id')
+data_test_extended<- inner_join(data_test_extended,data_extended_cluster%>% select(id,cluster),by='id')
+
+
+data_train_extended_cluster %>% group_by(cluster) %>% summarise(n=n())
+
+
+data_train_extended %>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
+data_train_cluster_sampled=c()
+for (cluster_id in seq(2:150)){
+              data_train_cluster_sampled=rbind(data_train_cluster_sampled,data_train_extended_cluster %>% filter(inclinacion_peligrosa=='no') %>% filter(cluster==cluster_id) %>% sample_n(size=20,replace=T))
+}
+
+data_train_cluster_sampled<- rbind(data_train_cluster_sampled, data_train_extended_cluster %>% filter(inclinacion_peligrosa=='si'))
+data_train_cluster_sampled %>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
+```
+## SAMPLING Technique by Clustering II
+
+```{r}
+data_arbolado<-data_train_extended
+data_selected_no<-data_arbolado%>% filter(inclinacion_peligrosa=='no') %>% select(altura,lat,long,circ_tronco_cm) 
+data_selected_si<-data_arbolado%>% filter(inclinacion_peligrosa=='si') %>% select(altura,lat,long,circ_tronco_cm,inclinacion_peligrosa) 
+
+data_selected_no_cluster<-kmeans(data_selected_no ,centers = 3579,nstart = 10)
+data_train_cluster_sampled<-rbind(
+  data_selected_si,
+  cbind(as.data.frame(data_selected_no_cluster$centers),inclinacion_peligrosa=rep('no'))
+)
+View(data_train_cluster_sampled)
+
+#%>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
+```
+
