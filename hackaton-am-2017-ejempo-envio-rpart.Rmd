@@ -1,0 +1,157 @@
+---
+title: "HACKATON AM - Arbolado Publico - Ejemplo de envio (I) Arbol de decision RPART"
+output:
+  html_document: 
+    highlight: haddock
+    number_sections: yes
+---
+```{r setup}
+
+suppressMessages(library(rpart))
+suppressMessages(library(caret))
+suppressMessages(library(readr))
+suppressMessages(library(dplyr))
+
+```
+
+
+```{r, eval=FALSE, include=FALSE}
+ scoreAUC<-function(category,posterior){
+  r=rank(posterior)
+  auc = (sum(r*(category==1)) - sum(category==1) * (sum(category==1)+1)/2) / ( sum(category<1) * sum(category==1));
+}
+```
+# Archivos de datos
+
+* **[arbolado-mza-dataset.csv](https://www.dropbox.com/s/5a0u4h55qnvklhl/arbolado-mza-dataset.csv?dl=1)** - conjunto de datos para entrenamiento
+* **[arbolado-mza-dataset-test.csv](https://www.dropbox.com/s/v6nmg1ny47kj9du/arbolado-mza-dataset-test.csv?dl=1)** - conjunto de datos para evaluacion
+* **[arbolado-mza-dataset-descripcion.csv](https://www.dropbox.com/s/qvf0frk1ejpu476/arbolado-mza-dataset-descripcion.csv?dl=1)** - Información extra sobre los datos.
+
+# Leer archivos  Entrenamiento y Testeo:
+
+Al usar la funcion *read_csv* del paquete **readr** tenemos la posibilidad de definir el tipo de dato que queremos para cada variable.
+
+```{r }
+data_train <- readr::read_csv("./arbolado-mza-dataset.csv",
+                              col_types = cols(
+  id = col_integer(),
+  especie = col_character(),
+  ultima_modificacion = col_character(),
+  altura = col_character(),
+  circ_tronco_cm = col_double(),
+  diametro_tronco = col_character(),
+  long = col_double(),
+  lat = col_double(),
+  seccion = col_integer(),
+  nombre_seccion = col_character(),
+  area_seccion = col_double(),
+  inclinacion_peligrosa = col_integer()
+))
+
+data_test <-  readr::read_csv("./arbolado-mza-dataset-test.csv",col_types = cols(
+  id = col_integer(),
+  especie = col_character(),
+  ultima_modificacion = col_character(),
+  altura = col_character(),
+  circ_tronco_cm = col_double(),
+  diametro_tronco = col_character(),
+  long = col_double(),
+  lat = col_double(),
+  seccion = col_integer(),
+  nombre_seccion = col_character(),
+  area_seccion = col_double()
+))
+
+```
+
+## Transformaciones:
+
+Algunos algoritmos no permiten nombres de factores como 1 y 0, se transforma la clase **inclinacion_peligrosa** a **si** y **no**
+```{r}
+data_train<-data_train %>% mutate(inclinacion_peligrosa=ifelse(inclinacion_peligrosa=='1','si','no'))
+data_train$inclinacion_peligrosa <-as.factor(data_train$inclinacion_peligrosa)
+```
+
+# Arbol de Decision (Rpart)
+## Entrenamiento
+
+Seleccionamos algunos atributos que a priori creemos que pueden explicar la inclinacion del arbol
+
+* **altura**
+* **circunferencia del tronco **
+* **Latitud**
+* **Longitud**
+* **Seccion Administrativa**
+* **Especie**
+
+Luego se entrena un arbol de decision utilizando los parametros por omision.
+
+```{r}
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+seccion+especie)
+tree_model_3<-rpart(train_formula,data=data_train)
+```
+
+## Generacion del archivo de ENVIO
+Para generar un archivo de envio, necesitamos aplicar la funcion *predict()* sobre el conjunto de evaluacion. La prediccion da como resultado la probabilidad asignada a cada clase. 
+
+```{r}
+preds_tree_probs=predict(tree_model_3,data_test,type='prob')
+head(preds_tree_probs)
+```
+
+Sim embargo para poder hacer el envio a Kaggle, necesitamos un archivo que tenga los ID de cada registro y el valor **0** (no peligrosa) o **1** (peligrosa). Para esto hay que por un lado convertir las probabilidades de las classes **si** y **no** a sus correspondientes **0** y **1**.  
+
+Para esto hay que establecer un umbral (threshold) a partir del cual se decide si un registro pertenece a la clase 0 o a la clase 1. Comunmente se toma un $valor >=0.5$ para indicar la pertenencia a una clase. Por ejemplo el registro con el ID tiene una probabilidad 0.92798 la cual es >=0.5 por lo tanto $\in$ a la clase 1. Esto se puede hacer facilmente en una linea usando la funcion *ifelse()*
+
+
+```{r}
+preds_tree=ifelse(preds_tree_probs[,1] >=0.5,1,0)
+head(preds_tree)
+```
+Ahora tenemos para cada registro del conjunto de testeo la clase a la que pertenece segun las predicciones del arbol de decision. Lo que queda entonces es simplemente agregar los ID de cada registro y crear un archivo con el envio. 
+```{r}
+submission<-data.frame(id=data_test$id,inclinacion_peligrosa=preds_tree)
+readr::write_csv(submission,"./arbolado-mza-dataset-envio-ejemplo-rpart.csv")
+head(submission)
+```
+# Arbol de Decision con Validacion
+## Creando un archivos de Validacion
+Antes de hacer un envio a Kaggle podemos darnos una idea de lo bien que funciona nuestro algoritmo, para esto basta con separar una porcion del conjunto de entrenamiento y usarla para validadcion
+```{r}
+set.seed(100) # para que sea un ejemplo reproducible
+data_validation_index<-sample(nrow(data_train),nrow(data_train)*0.1)
+data_validation<-data_train[data_validation_index,]
+data_train<-data_train[-data_validation_index,]
+```
+
+Una vez separado en 2 archivos, rentrenamos el modelo usando la funcion *rpart()*
+## Entrenamiento
+```{r}
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+seccion+especie)
+tree_model_4<-rpart(train_formula,data=data_train)
+```
+
+y ahora calculamos las predicciones para el conjunto de validacion. Aca se repite el mismo proceso que en ejemplo anterior para convertir las probabilidades a las correspondientes classes **0** y **1**.
+## Generacion del dataframe con los resultados de la validacion
+```{r, message=FALSE, warning=FALSE}
+preds_tree_probs=predict(tree_model_4,data_validation,type='prob')
+preds_tree=ifelse(preds_tree_probs[,2] >=0.5,'si','no')
+resultados_validation<-data.frame(inclinacion_peligrosa=preds_tree)
+```
+
+## Calculo de la matriz de confusion
+Luego podemos calcular algunas metricas utilizando los resultados de nuestro prediccion y comparandolos con los valores correctos del archivo **data_validation**.
+
+La funcion *confusionMatrix()* del paquete *caret* nos facilita calcular la matriz de confusion ademas de varias metricas
+
+```{r, message=FALSE, warning=FALSE}
+confusionMatrix(resultados_validation$inclinacion_peligrosa,data_validation$inclinacion_peligrosa)
+```
+
+**Podemos ver que para este caso, el arbol a clasificado a todas los registros como NO peligrosos. Por que sera?**
+
+```{r, eval=FALSE, include=FALSE}
+solutions<-readr::read_csv("./arbolado-mza-dataset-solutions.csv")
+confusionMatrix(submission$inclinacion_peligrosa,solutions$inclinacion_peligrosa,mode='everything')
+auc(solutions$inclinacion_peligrosa,submission$inclinacion_peligrosa)
+```
