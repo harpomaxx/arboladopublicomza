@@ -1,4 +1,4 @@
----
+ķ---
 title: "Arbolado Publico Cdad. Mendoza (2016)"
 output: html_notebook
 ---
@@ -13,11 +13,17 @@ library(tidyr)
 library(DMwR)
 #suppressMessages(library(plotly))
 ```
+# Soporte ejecucion paralela
+```{r}
+stopCluster(parallelCluster)
+```
+
 
 ```{r}
 library(parallel)
 library(doParallel)
 library(readr)
+
 Sys.setenv(PATH = paste0(Sys.getenv('PATH'), ':/usr/lib/rstudio-server/bin/postback'))
 primary <- '192.168.1.130'
 machineAddresses <- list(
@@ -42,12 +48,21 @@ registerDoParallel(parallelCluster,cores=NULL)
 getDoParWorkers()
 ```
 
-# Algunas PREGUNTAS a responder:
+# PREGUNTA a responder:
 
-1. Se puede considerar alguna sección mas peligrosa que otra?
-2. Se puede considerar alguna especie mas peligrosa que otra?
-3. ** Se puede predecir el grado de peligrosidad de una arbol dado sus caracteristicas?**
+1. ** Se puede predecir el grado de peligrosidad de una arbol dado sus caracteristicas?**
 
+# Posibles Features?
+1. Promedios por especie? Altura y Tronco
+
+# Objetivos y logros:
+1. Lidiar con datasets reales
+2. Trabajar con clases no balanceadas
+  a. Aprender o reforzar nuevas metricas
+  b. Aprender tecnicas de Sampling
+3. Ajuste fino de algoritmos
+4. Proponer nuevas tecnicas
+5. Trabajar en Equipo
 
 Se utilizan 2 conjuntos de datos por el gobierno de la cdad. de Mendoza.
 El primero contiene el censo georeferenciado del arbolado publico. El segundo los mapas administrativos de la ciudad (Secciones)
@@ -102,11 +117,11 @@ names(data_arbolado)<-c("id","especie","ultima_modificacion","altura","circ_tron
 
 ```
 
-5. Creamos la clase **inclinacion_grave** con valores si no
+5. Creamos la clase **inclinacion_peligrosa** con valores si no
 ```{r, eval=FALSE, include=FALSE}
-data_arbolado<-data_arbolado %>% mutate(inclinacion_grave=ifelse(inclinacion=="Grave (> 30ø)","si","no"))
-data_arbolado$inclinacion_grave<-as.factor(data_arbolado$inclinacion_grave)
-data_arbolado %>% group_by(inclinacion_grave) %>% summarise(n=n())
+data_arbolado<-data_arbolado %>% mutate(inclinacion_peligrosa=ifelse(inclinacion=="Grave (> 30ø)","si","no"))
+data_arbolado$inclinacion_peligrosa<-as.factor(data_arbolado$inclinacion_peligrosa)
+data_arbolado %>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
 #data_arbolado<-data_arbolado %>% select(-inclinacion)
 save(data_arbolado,file="./data/arboladomendoza.rda")
 
@@ -117,7 +132,7 @@ save(data_arbolado,file="./data/arboladomendoza.rda")
 ```{r}
 load("~/data/arboladomendoza.rda")
 data_arbolado
-data_arbolado %>% group_by(especie) %>% summarise(total=n(),incl_sum=sum(ifelse(inclinacion_grave=='si',1,0)),percent=incl_sum/total)%>% arrange(desc(percent))
+data_arbolado %>% group_by(especie) %>% summarise(total=n(),incl_sum=sum(ifelse(inclinacion_peligrosa=='si',1,0)),percent=incl_sum/total)%>% arrange(desc(percent))
 ```
 
 
@@ -127,20 +142,20 @@ data_arbolado %>% group_by(especie) %>% summarise(total=n(),incl_sum=sum(ifelse(
 ```{r, eval=FALSE, fig.height=8, message=FALSE, warning=FALSE, include=FALSE}
 mza_map <- get_map(location = "mendoza", zoom = 14,maptype = "roadmap",color = "bw")
 ggmap(mza_map)+ 
-  geom_point(aes(x= long, y=lat,color=especie),data=data_arbolado %>% filter(inclinacion_grave=='si'),size=0.4)
+  geom_point(aes(x= long, y=lat,color=especie),data=data_arbolado %>% filter(inclinacion_peligrosa=='si'),size=0.4)
 ```
 
 
 ```{r, fig.height=6}
 histogram(~especie,data=data_arbolado,scales = list(x=list(rot=45)))
-histogram(~especie|inclinacion_grave,data=data_arbolado,scales = list(x=list(rot=45),cex=0.6))
+histogram(~especie|inclinacion_peligrosa,data=data_arbolado,scales = list(x=list(rot=45),cex=0.6))
 ```
 
 
 ### Mapa de Densidad del arbolado publico  en Mendoza con una inclinación grave
 ```{r, eval=FALSE, fig.height=8, message=FALSE, warning=FALSE, include=FALSE}
 mza_map <- get_map(location = "mendoza", zoom = 14,maptype = "roadmap",color = "bw")
-data_inclinacion=data_arbolado  %>% filter(inclinacion_grave=="si")
+data_inclinacion=data_arbolado  %>% filter(inclinacion_peligrosa=="si")
 data_altura=data_arbolado  %>% filter(grepl("Alto",altura))
 
 gg=ggmap(mza_map)+ 
@@ -165,8 +180,8 @@ Una **hipotesis** posible seria las caracteristicas del suelo pantonoso
 
 ### Distribución de la inclinación para cada una de las secciónes
 ```{r fig.height=8}
-inclinacion_por_seccion=data_arbolado %>% group_by(seccion,inclinacion_grave) %>% summarise(n=n()) %>%  mutate(freq=(n/sum(n))*100)
-barchart(n~factor(seccion),data=inclinacion_por_seccion,groups=inclinacion_grave,auto.key=T )
+inclinacion_por_seccion=data_arbolado %>% group_by(seccion,inclinacion_peligrosa) %>% summarise(n=n()) %>%  mutate(freq=(n/sum(n))*100)
+barchart(n~factor(seccion),data=inclinacion_por_seccion,groups=inclinacion_peligrosa,auto.key=T )
 inclinacion_por_seccion =inclinacion_por_seccion  %>% select(-freq) 
 ```
 
@@ -183,7 +198,7 @@ inclinacion_por_seccion =inclinacion_por_seccion  %>% select(-freq)
 #  especie !="Morera"
   
 #)
-
+load("~/data/arboladomendoza.rda")
 data_arbolado<-data_arbolado %>% select(-id,-ultima_modificacion,-nombre_seccion)
 altura_map<-c("Alto (> 8 mts)"=4,"Medio (4 - 8 mts)"=3,"Bajo (2 - 4 mts)"=2,"Muy bajo (1 - 2 mts)"=1)
 data_arbolado<-data_arbolado %>% mutate(altura=altura_map[as.character(altura)]) 
@@ -192,20 +207,25 @@ data_arbolado<-data_arbolado %>% mutate(diametro_tronco=diametro_tronco_map[as.c
 inclinacion_map<-c("Nula (< 15ø)"=1,"Leve (15 - 30)"=2,"Grave (> 30ø)"=3)
 data_arbolado<-data_arbolado %>% mutate(inclinacion=inclinacion_map[as.character(inclinacion)]) 
 
+especies_count<-data_arbolado %>% group_by(especie) %>% summarise(especie_total=n())
+data_arbolado<-inner_join(data_arbolado,especies_count,by="especie")
+
+especies_tronco_avg<-data_arbolado %>% group_by(especie) %>% summarise(tronco_promedio=mean(circ_tronco_cm))
+data_arbolado<-inner_join(data_arbolado,especies_tronco_avg,by="especie") %>% mutate(sd_tronco=circ_tronco_cm-tronco_promedio)
 
 data_arbolado
 ```
 ### Matriz de Correlacion
 ```{r, eval=FALSE, include=FALSE}
 library(d3heatmap)
-cor_matrix<-cor(data_arbolado %>% select(-especie,-seccion,-inclinacion_grave))
+cor_matrix<-cor(data_arbolado %>% select(-especie,-seccion,-inclinacion_peligrosa))
 d3heatmap(cor_matrix,colors = "Reds")
 ```
 
 ### Clustering 
 ```{r clustering, fig.height=8}
-#data_arbolado <- downSample(x = data_arbolado,  y = data_arbolado$inclinacion_grave, yname="class") %>% select(-class)
-data_arbolado %>% group_by(inclinacion_grave) %>% summarise(n=n())
+#data_arbolado <- downSample(x = data_arbolado,  y = data_arbolado$inclinacion_peligrosa, yname="class") %>% select(-class)
+data_arbolado %>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
 data_arbolado_seccion<-data_arbolado 
 #data_arbolado_selected<-data_arbolado_seccion %>% select(altura,circ_tronco_cm,diametro_tronco_cm,lat,long,area_seccion)
 
@@ -218,7 +238,7 @@ data_arbolado_selected_prec<-predict(preProcess(data_arbolado_selected, method =
 # Ejecutamos Kmeans
 kmeans_mod<-kmeans(data_arbolado_selected_prec,centers =10,nstart=40)
 data_arbolado_cluster<-cbind(data_arbolado_seccion,cluster=kmeans_mod$cluster)
-data_arbolado_cluster %>% group_by(cluster) %>% summarise(inclinados=sum(inclinacion_grave=="si"),total=n(),percent=inclinados/total) %>% arrange(desc(percent))
+data_arbolado_cluster %>% group_by(cluster) %>% summarise(inclinados=sum(inclinacion_peligrosa=="si"),total=n(),percent=inclinados/total) %>% arrange(desc(percent))
 # Promedios
 data_arbolado_cluster_summary<- data_arbolado_cluster %>% group_by(cluster) %>% summarise(
   lat=mean(lat),long=mean(long),altura=mean(altura)
@@ -235,7 +255,7 @@ precvalues<-predict(preProcess(data_arbolado_cluster_summary, method = c("range"
 
 pca<-prcomp(data_arbolado_selected, center = TRUE, scale. = TRUE) 
 pca_arbolado<-data.frame(pca$x,
-                         inclinacion_grave=data_arbolado$inclinacion_grave,
+                         inclinacion_peligrosa=data_arbolado$inclinacion_peligrosa,
                          cluster=data_arbolado_cluster$cluster,
                          especie=data_arbolado$especie,
                          seccion=data_arbolado$seccion)
@@ -244,7 +264,7 @@ pca_arbolado<-data.frame(pca$x,
 sample_pca_arbolado<-pca_arbolado[sample(nrow(pca_arbolado),(nrow(pca_arbolado)*10/100)),]   
 
 g<-ggplot(sample_pca_arbolado,aes(x=PC1,y=PC2))+
-  geom_jitter(aes(color=as.factor(inclinacion_grave),text=cluster,shape=inclinacion_grave    ))+
+  geom_jitter(aes(color=as.factor(inclinacion_peligrosa),text=cluster,shape=inclinacion_peligrosa    ))+
   #geom_point(aes(shape=asignacion),size=3)+
   ylab("PC1")+xlab("PC2")+
   theme_classic()+
@@ -253,31 +273,63 @@ g<-ggplot(sample_pca_arbolado,aes(x=PC1,y=PC2))+
 g
 #ggplotly(g)
 
-#data_arbolado_cluster %>% group_by(cluster) %>% summarise(sum_inc=sum(inclinacion_grave=="si"))
+#data_arbolado_cluster %>% group_by(cluster) %>% summarise(sum_inc=sum(inclinacion_peligrosa=="si"))
 #data_arbolado_cluster %>% filter(cluster==2) %>% group_by(especie) %>% summarise(n=n())
 ```
 
 
 
 
-##  Dataset de Train y Test
-```{r}
+##  OBSOLETO: Dataset de Train y Test
+```{r, eval=FALSE, include=FALSE}
 set.seed(300)
 #trainset<-pca_arbolado
 trainset<-data_arbolado
-trainIndex <- createDataPartition(trainset$inclinacion_grave, p=0.70, list=FALSE)
+trainIndex <- createDataPartition(trainset$inclinacion_peligrosa, p=0.70, list=FALSE)
 data_train <- trainset[ trainIndex,]
 data_test <-  trainset[-trainIndex,]
 ## Agregamos informacion del cluster
-data_train<-cbind(data_train,cluster=data_arbolado_cluster[trainIndex,]$cluster)
-data_test <-cbind(data_test,cluster=data_arbolado_cluster[-trainIndex,]$cluster)
+#data_train<-cbind(data_train,cluster=data_arbolado_cluster[trainIndex,]$cluster)
+#data_test <-cbind(data_test,cluster=data_arbolado_cluster[-trainIndex,]$cluster)
 data_train
+```
+# KAGGLE Train y test
+```{r }
+data_train <- readr::read_csv("./arbolado-mza-dataset.csv",
+                              col_types = cols(
+  id = col_integer(),
+  especie = col_character(),
+  ultima_modificacion = col_character(),
+  altura = col_character(),
+  circ_tronco_cm = col_double(),
+  diametro_tronco = col_character(),
+  long = col_double(),
+  lat = col_double(),
+  seccion = col_integer(),
+  nombre_seccion = col_character(),
+  area_seccion = col_double(),
+  inclinacion_peligrosa = col_integer()
+))
+data_train<-data_train %>% mutate(inclinacion_peligrosa=ifelse(inclinacion_peligrosa=='1','si','no'))
+data_test <-  readr::read_csv("./arbolado-mza-dataset-test.csv",col_types = cols(
+  id = col_integer(),
+  especie = col_character(),
+  ultima_modificacion = col_character(),
+  altura = col_character(),
+  circ_tronco_cm = col_double(),
+  diametro_tronco = col_character(),
+  long = col_double(),
+  lat = col_double(),
+  seccion = col_integer(),
+  nombre_seccion = col_character(),
+  area_seccion = col_double()
+))
 ```
 
 ```{r}
 #names(data_arbolado_selected)
-#train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long+area_seccion+especie)
-#train_formula<-formula(inclinacion_grave~PC1+PC2+PC5+cluster)
+#train_formula<-formula(inclinacion_peligrosa~altura+diametro_tronco_cm+lat+long+area_seccion+especie)
+#train_formula<-formula(inclinacion_peligrosa~PC1+PC2+PC5+cluster)
 
 ```
 
@@ -287,11 +339,12 @@ data_train
 
 ### resampling de Training
 ```{r}
-#data_train_upsam <- downSample(x = data_train,  y = data_train$inclinacion_grave, yname="class")
-#data_train_upsam <-SMOTE(inclinacion_grave~.,data=data_train,perc.over = 200,perc.under=200)
+#data_train_upsam <- downSample(x = data_train,  y = data_train$inclinacion_peligrosa, yname="class")
+#data_train_upsam <-SMOTE(inclinacion_peligrosa~.,data=data_train,perc.over = 200,perc.under=200)
 #data_train_upsam<-data_train[sample(nrow(data_train),nrow(data_train)/10),]
 data_train_upsam<-data_train
-data_train_upsam %>% group_by(inclinacion_grave) %>% summarise(n=n())
+data_train_upsam$inclinacion_peligrosa<-as.factor(data_train_upsam$inclinacion_peligrosa)
+data_train_upsam %>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
 
 data_train_upsam
 ```
@@ -300,12 +353,11 @@ data_train_upsam
 
 ```{r}
 
-model_weights <- ifelse(data_train_upsam$inclinacion_grave == "si",
-                        (1/table(data_train_upsam$inclinacion_grave)[2]) * 0.5,
-                        (1/table(data_train_upsam$inclinacion_grave)[1]) * 0.5)
-svmGrid <-  expand.grid(C= c(0.5,0.4,0.3,0.2,0.1), 
-                        sigma = c(0.01,0.02,0.1,0.5,1) ,
-                        Weight =1:2
+model_weights <- ifelse(data_train_upsam$inclinacion_peligrosa == "si",
+                        (1/table(data_train_upsam$inclinacion_peligrosa)[2]) * 0.5,
+                        (1/table(data_train_upsam$inclinacion_peligrosa)[1]) * 0.5)
+svmGrid <-  expand.grid(C= c(0.5,0.4,0.3,0.2,0.1,0.05,0.02,0.01), 
+                        sigma = c(0.01,0.02,0.1,0.5,1) 
                         )
 ctrl_fast <- trainControl(method="cv", 
                      repeats=2,
@@ -320,7 +372,7 @@ ctrl_fast <- trainControl(method="cv",
 ### Neural Networks
 ```{r, eval=FALSE, include=FALSE}
 #registerDoParallel(4)
-train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long)
+train_formula<-formula(inclinacion_peligrosa~altura+diametro_tronco_cm+lat+long)
 nnet_model<- train(train_formula,
                data = data_train_upsam,
                method = "nnet",
@@ -329,12 +381,12 @@ nnet_model<- train(train_formula,
                trControl = ctrl_fast)
 predsnnetprobsamp=predict(nnet_model,data_test,type='prob')
 predsnnetsamp=ifelse(predsnnetprobsamp$si >=0.5,'si','no')
-confusionMatrix(predsnnetsamp,data_test$inclinacion_grave)
+confusionMatrix(predsnnetsamp,data_test$inclinacion_peligrosa)
 ```
 
 ### Linear Support Vector Machines
 ```{r}
-train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long+area_seccion)
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+area_seccion+especie_total)
 svml_model<- train(train_formula,
                data = data_train_upsam,
                tunelength=8,
@@ -344,42 +396,123 @@ svml_model<- train(train_formula,
                trControl = ctrl_fast)
 predssvml_probsamp=predict(svml_model,data_test,type='prob')
 predssvml_samp=ifelse(predssvml_probsamp$si >=0.5,'si','no')
-confusionMatrix(predssvml_samp,data_test$inclinacion_grave)
+confusionMatrix(predssvml_samp,data_test$inclinacion_peligrosa)
 ```
 
 
 ###  Support Vector Machines
 ```{r}
-train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long+area_seccion)
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+area_seccion+especie_total+sd_tronco+tronco_promedio)
 svmr_model<- train(train_formula,
                data = data_train_upsam,
                tuneLength = 8,
-               method = "svmRadial",   # linear kernel
+               #tuneGrid=svmGrid,
+               method = "svmRadial",   
                preProcess=c("scale","center"),
                metric="ROC",
                trControl = ctrl_fast)
+svmr_model
 predssvml_probsamp=predict(svmr_model,data_test,type='prob')
 predssvml_samp=ifelse(predssvml_probsamp$si >=0.5,'si','no')
-confusionMatrix(predssvml_samp,data_test$inclinacion_grave)
+confusionMatrix(predssvml_samp,data_test$inclinacion_peligrosa,mode='everything')
 ```
 
 ### Decision Trees
+#### BASICO no sampling, no tuning
 ```{r}
-train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long+area_seccion+especie)
-tree_model<- train(train_formula,
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+seccion+especie)
+ctrl_fast$sampling=NULL
+tree_model_1<- train(train_formula,
                data = data_train_upsam,
                method = "rpart",
-               tuneLength = 8,
+               #tuneLength = 8,
+               #preProcess=c("scale","center"),
+               metric="ROC",
+               trControl = ctrl_fast)
+tree_model_1
+preds_tree_probsamp=predict(tree_model_1,data_test,type='prob')
+preds_tree_samp=ifelse(preds_tree_probsamp$si >=0.5,'si','no')
+confusionMatrix(preds_tree_samp,data_test$inclinacion_peligrosa,mode='everything')
+
+```
+
+#### BASICO no sampling,  tuning
+```{r}
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+seccion+especie)
+ctrl_fast$sampling=NULL
+tree_model_2<- train(train_formula,
+               data = data_train_upsam,
+               method = "rpart",
+               tuneLength = 12,
+               #preProcess=c("scale","center"),
+               metric="ROC",
+               trControl = ctrl_fast)
+tree_model_2
+preds_tree_probsamp=predict(tree_model_2,data_test,type='prob')
+preds_tree_samp=ifelse(preds_tree_probsamp$si >=0.5,'si','no')
+confusionMatrix(preds_tree_samp,data_test$inclinacion_peligrosa,mode = 'everything')
+```
+#### BASICO down sampling,  tuning
+```{r}
+data_train %>% group_by(inclinacion_peligrosa) %>% summarise(n=n())
+
+data_train
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+seccion+especie)
+ctrl_fast$sampling='down'
+tree_model_3<- train(train_formula,
+               data = data_train_upsam,
+               method = "rpart",
+               tuneLength = 12,
+               #preProcess=c("scale","center"),
+               metric="ROC",
+               trControl = ctrl_fast)
+tree_model_3
+data_test
+predict(tree_model_3,data_test,type='prob')
+
+
+preds_tree_probsamp=predict(tree_model_3,data_test,type='prob',se.fit=FALSE)
+
+
+preds_tree_samp=ifelse(preds_tree_probsamp$si >=0.5,1,0)
+submission<-data.frame(id=data_test$id,inclinacion_peligrosa=preds_tree_samp)
+readr::write_csv(submission,"./arbolado-mza-dataset-envio-ejemplo-rpart.csv")
+#confusionMatrix(preds_tree_samp,data_test$inclinacion_peligrosa,mode='everything')
+```
+
+
+#### MEJORADO down sampling,  tuning, features
+```{r}
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+area_seccion+especie_total)
+ctrl_fast$sampling='down'
+tree_model_4<- train(train_formula,
+               data = data_train_upsam,
+               method = "rpart",
+               tuneLength = 12,
                preProcess=c("scale","center"),
                metric="ROC",
                trControl = ctrl_fast)
-preds_tree_probsamp=predict(tree_model,data_test,type='prob')
+tree_model_4
+preds_tree_probsamp=predict(tree_model_4,data_test,type='prob')
 preds_tree_samp=ifelse(preds_tree_probsamp$si >=0.5,'si','no')
-confusionMatrix(preds_tree_samp,data_test$inclinacion_grave)
+confusionMatrix(preds_tree_samp,data_test$inclinacion_peligrosa)
 ```
+```{r}
+resamps <- resamples(list(TREE_1 = tree_model_1,
+                          TREE_2 = tree_model_2,
+                          TREE_3 = tree_model_3,
+                          TREE_4 = tree_model_4
+                          )
+                     )
+
+bwplot(resamps, layout = c(3, 1))
+
+```
+
+
 ### K Nearest Neighbours
 ```{r}
-train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long+area_seccion)
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+area_seccion+especie_total)
 knn_model<- train(train_formula,
                data = data_train_upsam,
                method = "knn",
@@ -387,15 +520,16 @@ knn_model<- train(train_formula,
                preProcess=c("scale","center"),
                metric="ROC",
                trControl = ctrl_fast)
+knn_model
 predsrfprobsamp=predict(knn_model,data_test,type='prob')
 predsrfsamp=ifelse(predsrfprobsamp$si >=0.5,'si','no')
-confusionMatrix(predsrfsamp,data_test$inclinacion_grave)
+confusionMatrix(predsrfsamp,data_test$inclinacion_peligrosa,mode='everything')
 ```
 
 
 ### Random Forest
 ```{r}
-train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long+area_seccion+especie)
+train_formula<-formula(inclinacion_peligrosa~altura+circ_tronco_cm+lat+long+area_seccion+especie_total)
 rf_model<- train(train_formula,
                data = data_train_upsam,
                method = "rf",
@@ -403,9 +537,10 @@ rf_model<- train(train_formula,
                preProcess=c("scale","center"),
                metric="ROC",
                trControl = ctrl_fast)
+rf_model
 predsrfprobsamp=predict(rf_model,data_test,type='prob')
-predsrfsamp=ifelse(predsrfprobsamp$si >=0.58,'si','no')
-confusionMatrix(predsrfsamp,data_test$inclinacion_grave)
+predsrfsamp=ifelse(predsrfprobsamp$si >=0.54,'si','no')
+confusionMatrix(predsrfsamp,data_test$inclinacion_peligrosa,mode='everything')
 ```
 
 
@@ -413,8 +548,8 @@ confusionMatrix(predsrfsamp,data_test$inclinacion_grave)
 ## Mejoras (?)
 ### Incluir cluster ID
 ```{r}
-#train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long+area_seccion+especie)
-train_formula<-formula(inclinacion_grave~altura+diametro_tronco_cm+lat+long+area_seccion+cluster+especie)
+#train_formula<-formula(inclinacion_peligrosa~altura+diametro_tronco_cm+lat+long+area_seccion+especie)
+train_formula<-formula(inclinacion_peligrosa~altura+diametro_tronco_cm+lat+long+area_seccion+cluster+especie)
 rf_model_cluster<- train(train_formula,
                data = data_train_upsam,
                method = "rf",
@@ -425,7 +560,7 @@ rf_model_cluster<- train(train_formula,
 rf_model_cluster
 predsrf_cluster_probsamp=predict(rf_model_cluster,data_test,type='prob')
 predsrf_cluster_samp=ifelse(predsrf_cluster_probsamp$si >=0.56,'si','no')
-confusionMatrix(predsrf_cluster_samp,data_test$inclinacion_grave)
+confusionMatrix(predsrf_cluster_samp,data_test$inclinacion_peligrosa)
 ```
 
 ```{r}
@@ -440,4 +575,7 @@ resamps <- resamples(list(SVML = svml_model,
 
 bwplot(resamps, layout = c(3, 1))
 
+```
+```{r}
+stopCluster(parallelCluster)
 ```
