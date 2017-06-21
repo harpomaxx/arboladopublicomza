@@ -1,0 +1,84 @@
+---
+title: "HACKATON AM - Arbolado Publico - Manejando clases desbalanceadas"
+output:
+  html_notebook: 
+    highlight: haddock
+    number_sections: no
+---
+```{r setup}
+
+suppressMessages(library(rpart))
+suppressMessages(library(caret))
+suppressMessages(library(readr))
+suppressMessages(library(dplyr))
+
+```
+
+
+# Archivos de datos
+
+* **[arbolado-mza-dataset.csv](https://www.dropbox.com/s/5a0u4h55qnvklhl/arbolado-mza-dataset.csv?dl=1)** - conjunto de datos para entrenamiento
+* **[arbolado-mza-dataset-test.csv](https://www.dropbox.com/s/v6nmg1ny47kj9du/arbolado-mza-dataset-test.csv?dl=1)** - conjunto de datos para evaluacion
+* **[arbolado-mza-dataset-descripcion.csv](https://www.dropbox.com/s/qvf0frk1ejpu476/arbolado-mza-dataset-descripcion.csv?dl=1)** - Información extra sobre los datos.
+
+# Leer archivos  Entrenamiento y Testeo:
+
+Al usar la funcion *read_csv* del paquete **readr** tenemos la posibilidad de definir el tipo de dato que queremos para cada variable.
+
+```{r }
+data_train <- readr::read_csv("./data/arbolado-mza-dataset.csv",
+                              col_types = cols(
+  id = col_integer(),
+  especie = col_character(),
+  ultima_modificacion = col_character(),
+  altura = col_character(),
+  circ_tronco_cm = col_double(),
+  diametro_tronco = col_character(),
+  long = col_double(),
+  lat = col_double(),
+  seccion = col_integer(),
+  nombre_seccion = col_character(),
+  area_seccion = col_double(),
+  inclinacion_peligrosa = col_factor(levels = c(0,1))
+))
+
+data_test <-  readr::read_csv("./data/arbolado-mza-dataset-test.csv",col_types = cols(
+  id = col_integer(),
+  especie = col_character(),
+  ultima_modificacion = col_character(),
+  altura = col_character(),
+  circ_tronco_cm = col_double(),
+  diametro_tronco = col_character(),
+  long = col_double(),
+  lat = col_double(),
+  seccion = col_integer(),
+  nombre_seccion = col_character(),
+  area_seccion = col_double()
+))
+
+```
+
+## Cual es la distribucion de las clase **inclinacion_peligrosa?**
+
+Para responder esta primer pregunta basta con contabilizar las ocurrencias de cada uno de los valores posibles de  clase **inclinacion_peligrosa**. Usando dplyr, basta con agrupar por cada uno de los valores la clase via (via **group_by()**) y luego con **summarise()** contabilizar el total de cada grupo creado. La funcion especial **n()** permite contabilizar cada uno de los grupos formados.
+
+```{r echo=TRUE}
+data_train %>%  group_by(inclinacion_peligrosa) %>% summarise(total=n())
+```
+## Aplicamos Downsampling
+
+Para esto tenemos que cargar el paquete **caret** y utilizar la funcion **DownSample()**. La funcion **downSample()** requiere 2 parametros, el primero es el conjunto de datos (data_train en esta caso) y el segundo la clase que nos interesa considerar para realizar el downsampling (en esta caso *inclinacion_peligrosa*). Tenga en cuenta que inclinacion_peligrosa necesita debe ser  convertida a un **factor**
+
+```{r}
+library(caret)
+data_train_down<-downSample(data_train,data_train$inclinacion_peligrosa)
+data_train_down %>%group_by(inclinacion_peligrosa) %>% summarise(total=n())
+```
+
+
+## Aplicamos UpSampling
+```{r}
+data_train_up<-upSample(data_train,data_train$inclinacion_peligrosa)
+data_train_up %>%group_by(inclinacion_peligrosa) %>% summarise(total=n())
+```
+
